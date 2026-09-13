@@ -1,6 +1,18 @@
-venv
-.venv
-env
-__pycache__
-*.pyc
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment Variables
 .env
+.env.local
+
+# Python Bytecode & Cache Directories (Recursive)
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
