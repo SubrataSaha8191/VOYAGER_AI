@@ -113,50 +113,54 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
 
 async def call_gemini_fallback(messages: list) -> str:
     """
-    Calls the Gemini API (gemini-flash-latest) using the GOOGLE_API_KEY env variable as a fallback.
+    Calls Google Gemini REST API using GOOGLE_API_KEY / GEMINI_API_KEY as a fallback.
+    Tries multiple supported model identifiers to ensure maximum reliability.
     """
     google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not google_api_key:
         logger.warning("GOOGLE_API_KEY not found in environment. Skipping Gemini fallback.")
         return ""
-        
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={google_api_key}"
+
+    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest"]
     headers = {"Content-Type": "application/json"}
-    
+
     formatted_contents = []
     system_instruction = ""
-    
+
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content", "")
-        
+
         if role == "system":
             system_instruction = content
         elif role == "user":
             formatted_contents.append({"role": "user", "parts": [{"text": content}]})
         elif role == "assistant":
             formatted_contents.append({"role": "model", "parts": [{"text": content}]})
-            
+
     payload = {"contents": formatted_contents}
     if system_instruction:
         payload["systemInstruction"] = {
             "parts": [{"text": system_instruction}]
         }
-        
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res_data = response.json()
-            candidates = res_data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "")
-        else:
-            logger.error(f"Gemini API returned status code {response.status_code}: {response.text}")
-    except Exception as e:
-        logger.error(f"Error calling Gemini API: {e}")
-        
+
+    for model_name in candidate_models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_api_key}"
+        try:
+            logger.info(f"✨ Invoking Gemini API ({model_name})...")
+            response = requests.post(url, json=payload, headers=headers, timeout=8)
+            if response.status_code == 200:
+                res_data = response.json()
+                candidates = res_data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return parts[0].get("text", "")
+            else:
+                logger.warning(f"Gemini API ({model_name}) status code {response.status_code}: {response.text[:200]}")
+        except Exception as e:
+            logger.error(f"Error calling Gemini API ({model_name}): {e}")
+
     return ""
 
 async def generate_travel_copilot_response(destination_name: str, query: str, chat_history: list = None, visit_date: str = None) -> str:
@@ -254,7 +258,7 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
 
     try:
         logger.info(f"🤖 Calling local Ollama LLM ({OLLAMA_MODEL})...")
-        response = requests.post(OLLAMA_URL, json=payload, timeout=12)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=4)
         if response.status_code == 200:
             res_data = response.json()
             llm_text = res_data.get("message", {}).get("content", "")
