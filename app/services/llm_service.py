@@ -240,41 +240,36 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
         for msg in chat_history:
             messages.insert(1, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
 
-    # Prioritize Gemini API if key is present for instant <1s responses
-    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
-        gemini_text = await call_gemini_fallback(messages)
-        if gemini_text:
-            return gemini_text
-            
+    # 1. Try Primary Local Ollama LLM (gemma2:2b)
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 256,
+            "num_predict": 384,
             "num_ctx": 2048
         }
     }
-    
+
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=6)
+        logger.info(f"🤖 Calling local Ollama LLM ({OLLAMA_MODEL})...")
+        response = requests.post(OLLAMA_URL, json=payload, timeout=12)
         if response.status_code == 200:
             res_data = response.json()
             llm_text = res_data.get("message", {}).get("content", "")
             if llm_text:
                 return llm_text
-        
+
         logger.warning(f"Ollama returned status code {response.status_code}. Falling back to Gemini API.")
     except Exception as e:
-        logger.warning(f"Error/Timeout communicating with local Ollama LLM: {e}. Falling back to Gemini API.")
-        
-    # Fallback to Gemini if not called earlier
-    gemini_text = await call_gemini_fallback(messages)
-    if gemini_text:
-        return gemini_text
-    if gemini_text:
-        return gemini_text
+        logger.warning(f"Error/Timeout communicating with local Ollama LLM ({OLLAMA_MODEL}): {e}. Falling back to Gemini API.")
+
+    # 2. Fallback to Gemini API if key is present
+    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
+        gemini_text = await call_gemini_fallback(messages)
+        if gemini_text:
+            return gemini_text
         
     logger.warning("Gemini API fallback failed or key was missing. Falling back to rule-based generation.")
         
