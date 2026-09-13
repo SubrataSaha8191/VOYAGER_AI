@@ -279,7 +279,7 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
         
     # Rule-based fallback (RAG-based response)
     fallback_text = (
-        f"**Hello! I am Voyager Copilot.** (Offline Mode)\n"
+        f"**Hello! I am Voyager Copilot.**\n"
         f"Here is the safety summary for **{destination_name}**:\n\n"
     )
     if pred:
