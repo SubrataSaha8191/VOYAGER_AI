@@ -114,14 +114,14 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
 async def call_gemini_fallback(messages: list) -> str:
     """
     Calls Google Gemini REST API using GOOGLE_API_KEY / GEMINI_API_KEY as a fallback.
-    Tries multiple supported model identifiers to ensure maximum reliability.
+    Tries active supported model identifiers (gemini-3.5-flash) to ensure maximum reliability.
     """
     google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not google_api_key:
         logger.warning("GOOGLE_API_KEY not found in environment. Skipping Gemini fallback.")
         return ""
 
-    candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash", "gemini-1.5-flash-latest"]
+    candidate_models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"]
     headers = {"Content-Type": "application/json"}
 
     formatted_contents = []
@@ -244,30 +244,36 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
         for msg in chat_history:
             messages.insert(1, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
 
-    # 1. Try Primary Local Ollama LLM (gemma2:2b)
+    # 1. Try Gemini API first if API key is present (<1s instant response)
+    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
+        gemini_text = await call_gemini_fallback(messages)
+        if gemini_text:
+            return gemini_text
+
+    # 2. Try Local Ollama LLM (gemma2:2b)
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,
         "options": {
             "temperature": 0.3,
-            "num_predict": 384,
+            "num_predict": 256,
             "num_ctx": 2048
         }
     }
 
     try:
         logger.info(f"🤖 Calling local Ollama LLM ({OLLAMA_MODEL})...")
-        response = requests.post(OLLAMA_URL, json=payload, timeout=20)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=45)
         if response.status_code == 200:
             res_data = response.json()
             llm_text = res_data.get("message", {}).get("content", "")
             if llm_text:
                 return llm_text
 
-        logger.warning(f"Ollama returned status code {response.status_code}. Falling back to Gemini API.")
+        logger.warning(f"Ollama returned status code {response.status_code}.")
     except Exception as e:
-        logger.warning(f"Error/Timeout communicating with local Ollama LLM ({OLLAMA_MODEL}): {e}. Falling back to Gemini API.")
+        logger.warning(f"Error/Timeout communicating with local Ollama LLM ({OLLAMA_MODEL}): {e}")
 
     # 2. Fallback to Gemini API if key is present
     if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
