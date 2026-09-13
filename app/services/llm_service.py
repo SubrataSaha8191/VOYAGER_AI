@@ -64,7 +64,7 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
                 "summary": summary_txt,
                 "timestamp": datetime.now(timezone.utc)
             }
-            asyncio.create_task(prediction_collection.insert_one(prediction))
+            await prediction_collection.insert_one(prediction)
         except Exception as e:
             logger.warning(f"Could not compute dynamic live ML prediction for {destination_name}: {e}")
     else:
@@ -83,7 +83,7 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
                 "summary": prediction.get("summary", ""),
                 "timestamp": datetime.now(timezone.utc)
             }
-            asyncio.create_task(prediction_collection.insert_one(log_record))
+            await prediction_collection.insert_one(log_record)
         except Exception as e:
             logger.warning(f"Could not insert prediction log record: {e}")
     
@@ -121,7 +121,7 @@ async def call_gemini_fallback(messages: list) -> str:
         logger.warning("GOOGLE_API_KEY not found in environment. Skipping Gemini fallback.")
         return ""
 
-    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-flash-latest"]
+    candidate_models = ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-flash", "gemini-1.5-flash-latest"]
     headers = {"Content-Type": "application/json"}
 
     formatted_contents = []
@@ -148,7 +148,7 @@ async def call_gemini_fallback(messages: list) -> str:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_api_key}"
         try:
             logger.info(f"✨ Invoking Gemini API ({model_name})...")
-            response = requests.post(url, json=payload, headers=headers, timeout=8)
+            response = requests.post(url, json=payload, headers=headers, timeout=12)
             if response.status_code == 200:
                 res_data = response.json()
                 candidates = res_data.get("candidates", [])
@@ -258,7 +258,7 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
 
     try:
         logger.info(f"🤖 Calling local Ollama LLM ({OLLAMA_MODEL})...")
-        response = requests.post(OLLAMA_URL, json=payload, timeout=4)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=20)
         if response.status_code == 200:
             res_data = response.json()
             llm_text = res_data.get("message", {}).get("content", "")
