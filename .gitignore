@@ -1,18 +1,9 @@
-# Virtual Environments
-venv/
-.venv/
-env/
-ENV/
-
-# Environment Variables
+venv
 .env
-.env.local
-
-# Python Bytecode & Cache Directories (Recursive)
 __pycache__/
 **/__pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache/
-.ipynb_checkpoints/
+AI_Service/__pycache__/
+AI_Service/**/__pycache__/

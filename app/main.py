@@ -10,19 +10,9 @@ from app.routes.reports import router as reports_router
 from app.routes.predict import router as predict_router
 from app.routes.temp import router as temp_router
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI(
     title="Voyager AI Service",
     version="1.0.0"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 app.include_router(health_router)

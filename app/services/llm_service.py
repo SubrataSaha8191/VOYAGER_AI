@@ -64,7 +64,7 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
                 "summary": summary_txt,
                 "timestamp": datetime.now(timezone.utc)
             }
-            await prediction_collection.insert_one(prediction)
+            asyncio.create_task(prediction_collection.insert_one(prediction))
         except Exception as e:
             logger.warning(f"Could not compute dynamic live ML prediction for {destination_name}: {e}")
     else:
@@ -83,7 +83,7 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
                 "summary": prediction.get("summary", ""),
                 "timestamp": datetime.now(timezone.utc)
             }
-            await prediction_collection.insert_one(log_record)
+            asyncio.create_task(prediction_collection.insert_one(log_record))
         except Exception as e:
             logger.warning(f"Could not insert prediction log record: {e}")
     
@@ -113,54 +113,50 @@ async def get_destination_context(destination_name: str, visit_date: str = None)
 
 async def call_gemini_fallback(messages: list) -> str:
     """
-    Calls Google Gemini REST API using GOOGLE_API_KEY / GEMINI_API_KEY as a fallback.
-    Tries active supported model identifiers (gemini-3.5-flash) to ensure maximum reliability.
+    Calls the Gemini API (gemini-flash-latest) using the GOOGLE_API_KEY env variable as a fallback.
     """
     google_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not google_api_key:
         logger.warning("GOOGLE_API_KEY not found in environment. Skipping Gemini fallback.")
         return ""
-
-    candidate_models = ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"]
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={google_api_key}"
     headers = {"Content-Type": "application/json"}
-
+    
     formatted_contents = []
     system_instruction = ""
-
+    
     for msg in messages:
         role = msg.get("role")
         content = msg.get("content", "")
-
+        
         if role == "system":
             system_instruction = content
         elif role == "user":
             formatted_contents.append({"role": "user", "parts": [{"text": content}]})
         elif role == "assistant":
             formatted_contents.append({"role": "model", "parts": [{"text": content}]})
-
+            
     payload = {"contents": formatted_contents}
     if system_instruction:
         payload["systemInstruction"] = {
             "parts": [{"text": system_instruction}]
         }
-
-    for model_name in candidate_models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={google_api_key}"
-        try:
-            logger.info(f"✨ Invoking Gemini API ({model_name})...")
-            response = requests.post(url, json=payload, headers=headers, timeout=12)
-            if response.status_code == 200:
-                res_data = response.json()
-                candidates = res_data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return parts[0].get("text", "")
-            else:
-                logger.warning(f"Gemini API ({model_name}) status code {response.status_code}: {response.text[:200]}")
-        except Exception as e:
-            logger.error(f"Error calling Gemini API ({model_name}): {e}")
-
+        
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            res_data = response.json()
+            candidates = res_data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    return parts[0].get("text", "")
+        else:
+            logger.error(f"Gemini API returned status code {response.status_code}: {response.text}")
+    except Exception as e:
+        logger.error(f"Error calling Gemini API: {e}")
+        
     return ""
 
 async def generate_travel_copilot_response(destination_name: str, query: str, chat_history: list = None, visit_date: str = None) -> str:
@@ -244,13 +240,12 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
         for msg in chat_history:
             messages.insert(1, {"role": msg.get("role", "user"), "content": msg.get("content", "")})
 
-    # 1. Try Gemini API first if API key is present (<1s instant response)
+    # Prioritize Gemini API if key is present for instant <1s responses
     if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
         gemini_text = await call_gemini_fallback(messages)
         if gemini_text:
             return gemini_text
-
-    # 2. Try Local Ollama LLM (gemma2:2b)
+            
     payload = {
         "model": OLLAMA_MODEL,
         "messages": messages,
@@ -261,31 +256,31 @@ async def generate_travel_copilot_response(destination_name: str, query: str, ch
             "num_ctx": 2048
         }
     }
-
+    
     try:
-        logger.info(f"🤖 Calling local Ollama LLM ({OLLAMA_MODEL})...")
-        response = requests.post(OLLAMA_URL, json=payload, timeout=45)
+        response = requests.post(OLLAMA_URL, json=payload, timeout=6)
         if response.status_code == 200:
             res_data = response.json()
             llm_text = res_data.get("message", {}).get("content", "")
             if llm_text:
                 return llm_text
-
-        logger.warning(f"Ollama returned status code {response.status_code}.")
+        
+        logger.warning(f"Ollama returned status code {response.status_code}. Falling back to Gemini API.")
     except Exception as e:
-        logger.warning(f"Error/Timeout communicating with local Ollama LLM ({OLLAMA_MODEL}): {e}")
-
-    # 2. Fallback to Gemini API if key is present
-    if os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"):
-        gemini_text = await call_gemini_fallback(messages)
-        if gemini_text:
-            return gemini_text
+        logger.warning(f"Error/Timeout communicating with local Ollama LLM: {e}. Falling back to Gemini API.")
+        
+    # Fallback to Gemini if not called earlier
+    gemini_text = await call_gemini_fallback(messages)
+    if gemini_text:
+        return gemini_text
+    if gemini_text:
+        return gemini_text
         
     logger.warning("Gemini API fallback failed or key was missing. Falling back to rule-based generation.")
         
     # Rule-based fallback (RAG-based response)
     fallback_text = (
-        f"**Hello! I am Voyager Copilot.**\n"
+        f"**Hello! I am Voyager Copilot.** (Offline Mode)\n"
         f"Here is the safety summary for **{destination_name}**:\n\n"
     )
     if pred:
